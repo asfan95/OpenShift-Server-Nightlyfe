@@ -1,107 +1,162 @@
-//  OpenShift sample Node application
+ //Lets require/import the HTTP module
 var express = require('express'),
-    fs      = require('fs'),
-    app     = express(),
-    eps     = require('ejs'),
-    morgan  = require('morgan');
-    
-Object.assign=require('object-assign')
+	app = express(),
+	server= require('http').createServer(app),
+	io= require('socket.io').listen(server),
+	mongoose = require('mongoose'),
+	path = require('path'),
+	fs = require('fs'); // required for file serving
 
-app.engine('html', require('ejs').renderFile);
-app.use(morgan('combined'))
+app.use(express.static(__dirname + '/public'));
+const PORT=3000; 
+//Create a server
+server.listen(PORT);
+console.log("server is running at port: 3000");
 
-var port = process.env.PORT || process.env.OPENSHIFT_NODEJS_PORT || 8080,
-    ip   = process.env.IP   || process.env.OPENSHIFT_NODEJS_IP || '0.0.0.0',
-    mongoURL = process.env.OPENSHIFT_MONGODB_DB_URL || process.env.MONGO_URL,
-    mongoURLLabel = "";
-
-if (mongoURL == null && process.env.DATABASE_SERVICE_NAME) {
-  var mongoServiceName = process.env.DATABASE_SERVICE_NAME.toUpperCase(),
-      mongoHost = process.env[mongoServiceName + '_SERVICE_HOST'],
-      mongoPort = process.env[mongoServiceName + '_SERVICE_PORT'],
-      mongoDatabase = process.env[mongoServiceName + '_DATABASE'],
-      mongoPassword = process.env[mongoServiceName + '_PASSWORD']
-      mongoUser = process.env[mongoServiceName + '_USER'];
-
-  if (mongoHost && mongoPort && mongoDatabase) {
-    mongoURLLabel = mongoURL = 'mongodb://';
-    if (mongoUser && mongoPassword) {
-      mongoURL += mongoUser + ':' + mongoPassword + '@';
-    }
-    // Provide UI label that excludes user id and pw
-    mongoURLLabel += mongoHost + ':' + mongoPort + '/' + mongoDatabase;
-    mongoURL += mongoHost + ':' +  mongoPort + '/' + mongoDatabase;
-
-  }
-}
-var db = null,
-    dbDetails = new Object();
-
-var initDb = function(callback) {
-  if (mongoURL == null) return;
-
-  var mongodb = require('mongodb');
-  if (mongodb == null) return;
-
-  mongodb.connect(mongoURL, function(err, conn) {
-    if (err) {
-      callback(err);
-      return;
-    }
-
-    db = conn;
-    dbDetails.databaseName = db.databaseName;
-    dbDetails.url = mongoURLLabel;
-    dbDetails.type = 'MongoDB';
-
-    console.log('Connected to MongoDB at: %s', mongoURL);
-  });
-};
-
-app.get('/', function (req, res) {
-  // try to initialize the db on every request if it's not already
-  // initialized.
-  if (!db) {
-    initDb(function(err){});
-  }
-  if (db) {
-    var col = db.collection('counts');
-    // Create a document with request IP and current time of request
-    col.insert({ip: req.ip, date: Date.now()});
-    col.count(function(err, count){
-      res.render('index.html', { pageCountMessage : count, dbInfo: dbDetails });
-    });
-  } else {
-    res.render('index.html', { pageCountMessage : null});
-  }
+mongoose.connect('mongodb://localhost/nightLyfe', function(err){
+	if(err)
+	{
+		console.log(err);
+	}else{
+		console.log("connected to mongodb");
+	}
 });
 
-app.get('/pagecount', function (req, res) {
-  // try to initialize the db on every request if it's not already
-  // initialized.
-  if (!db) {
-    initDb(function(err){});
-  }
-  if (db) {
-    db.collection('counts').count(function(err, count ){
-      res.send('{ pageCount: ' + count + '}');
-    });
-  } else {
-    res.send('{ pageCount: -1 }');
-  }
+var clubCommentSchema= mongoose.Schema({
+	place_Name:String,
+	person_Name:String,
+	text:String,
+	created: Date,
+	location:{lat:0,long:0}
 });
+var clubComments = mongoose.model("clubComments",clubCommentSchema);
 
-// error handling
-app.use(function(err, req, res, next){
-  console.error(err.stack);
-  res.status(500).send('Something bad happened!');
+var chatMessagesSchema= mongoose.Schema({
+	place_Name:String,
+	person_Name:String,
+	text:String,
+	created: Date,
+	location:{lat:0,long:0}
 });
+var chatMessages = mongoose.model("chatMessages",chatMessagesSchema);
 
-initDb(function(err){
-  console.log('Error connecting to Mongo. Message:\n'+err);
+var clubPhotoSchema= mongoose.Schema({
+	place_Name:String,
+	person_Name:String,
+	image:String,
+	created: Date,
+	buffer: String
 });
+var clubPhotos = mongoose.model("clubPhotos",clubPhotoSchema);
 
-app.listen(port, ip);
-console.log('Server running on http://%s:%s', ip, port);
+io.sockets.on('connection', function(socket){
 
-module.exports = app ;
+	// clubcomments.remove({},function(err,doc){
+	// 				if(err)throw err;
+	// 		});
+	// socket.on('server function', function(data){
+	// 	console.log("client called the server");	
+	// 	io.sockets.emit('client function', {});
+	// });
+
+//---------------------------------------------------------------------------------------------------
+// These functions control the club comments
+	socket.on('New Club Comment', function(data){
+
+		var newClubcomment= new clubComments({
+			place_Name:data.place_Name,
+			person_Name:data.person_Name,
+			text:data.text,
+			created: data.created
+			});
+
+		newClubcomment.save(function(err){
+			if(err)
+				throw err;
+		
+			clubComments.find({place_Name:data.place_Name},function(err,doc)
+			{
+				if(err)throw err;
+
+				io.sockets.emit('refresh Club Comments',doc);
+			});
+		
+		});
+	});
+	socket.on('find Club Comment', function(data){
+		clubComments.find(data, function(err,doc)
+		{
+			if(err)throw err;
+
+			io.sockets.emit('refresh Club Comments',doc);
+		});
+	});
+//---------------------------------------------------------------------------------------------------
+// These functions control the club comments
+	socket.on('New Chat Message', function(data){
+
+		var newChatMessages = new chatMessages({
+			place_Name:data.place_Name,
+			person_Name:data.person_Name,
+			text:data.text,
+			created: data.created
+			});
+
+		newChatMessages.save(function(err){
+			if(err)
+				throw err;
+		
+			chatMessages.find({place_Name:data.place_Name},function(err,doc)
+			{
+				if(err)throw err;
+
+				io.sockets.emit('refresh Chat Message',doc);
+			});
+		
+		});
+	});
+	socket.on('find Chat Message', function(data){
+		chatMessages.find(data, function(err,doc)
+		{
+			if(err)throw err;
+
+			io.sockets.emit('refresh Chat Message',doc);
+		});
+	});
+//---------------------------------------------------------------------------------------------------
+// These functions control the club Photos
+	socket.on('New Club Photo', function(data){
+		//  fs.readFile(__dirname + '/images/image.jpg', function(err, buf){
+		// fs.readFile(data.buffer.fullPath, function(err, buf){
+		// 	console.log(buf);
+		// 	var newclubPhotos= new clubPhotos({
+		// 		image:true,
+		// 		buffer: buf,
+		// 		place_Name:data.place_Name,
+		// 		person_Name:data.person_Name,
+		// 		created: data.created
+		// 		});
+
+		// 	newclubPhotos.save(function(err){
+		// 		if(err)
+		// 			throw err;
+			
+		// 		clubPhotos.find({},function(err,doc)
+		// 		{
+		// 			if(err)throw err;
+
+		// 			io.sockets.emit('refresh Club Photo',doc);
+		// 		});
+			
+		// 	});
+		// });
+	});
+	socket.on('find Club Photo', function(data){
+		// clubPhotos.find({}, function(err,doc)
+		// {
+		// 	if(err)throw err;
+
+		// 	io.sockets.emit('refresh Club Photo',doc);
+		// });
+	});
+});
